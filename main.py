@@ -1,19 +1,15 @@
 import arcade
-from data.fetch_data import (
-    load_race,
-    get_driver_telemetry,
-    normalize_coordinates,
-)
+from data.fetch_data import load_race, get_multiple_drivers_telemetry
 from ui.arcade_view import TrackView
 
 
 def main():
     session = load_race(2023, "Monza", "R")
 
-    df = get_driver_telemetry(session, "16")
-    df = normalize_coordinates(df)
+    drivers = ["16", "55", "1"]
+    drivers_data = get_multiple_drivers_telemetry(session, drivers)
 
-    window = TrackView(df)
+    window = TrackView(drivers_data)
     arcade.run()
 
 

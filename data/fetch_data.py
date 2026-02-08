@@ -58,3 +58,30 @@ def normalize_coordinates(df, width=1200, height=800, padding=50):
     ) * (height - 2 * padding) + padding
 
     return df
+
+
+
+def get_multiple_drivers_telemetry(session, driver_numbers):
+    """
+    Load and normalize telemetry for multiple drivers.
+
+    Args:
+        session: FastF1 session object
+        driver_numbers: list of driver numbers as strings
+
+    Returns:
+        dict[str, pandas.DataFrame]
+    """
+
+    drivers_data = {}
+
+    for driver in driver_numbers:
+        print(f"Processing driver {driver}...")
+
+        df = get_driver_telemetry(session, driver)
+        df = normalize_coordinates(df)
+
+        drivers_data[driver] = df
+
+    return drivers_data
+
