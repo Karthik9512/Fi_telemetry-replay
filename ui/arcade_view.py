@@ -7,16 +7,19 @@ WINDOW_HEIGHT = 800
 WINDOW_TITLE = "F1 Telemetry Replay"
 
 # ================= TRACK STYLE =================
-TRACK_COLOR = arcade.color.LIGHT_GRAY
-TRACK_WIDTH = 8
+TRACK_BASE_COLOR = arcade.color.DARK_SLATE_GRAY   # Asphalt
+TRACK_LINE_COLOR = arcade.color.LIGHT_GRAY        # Racing line
 
-START_FINISH_INDEX = 0  # first telemetry point
+TRACK_BASE_WIDTH = 10
+TRACK_LINE_WIDTH = 4
+
+START_FINISH_INDEX = 0
 
 # ================= DRIVER COLORS =================
 DRIVER_COLORS = {
-    "16": arcade.color.RED,
-    "55": arcade.color.YELLOW,
-    "1": arcade.color.BLUE,
+    "16": arcade.color.RED,        # Leclerc
+    "55": arcade.color.YELLOW,     # Sainz
+    "1": arcade.color.BLUE,        # Verstappen
 }
 
 
@@ -29,25 +32,48 @@ class TrackView(arcade.Window):
         self.speed_multiplier = 1.0
         self.paused = False
 
+        # ===== TIMER =====
+        self.elapsed_time = 0.0  # seconds
+
         arcade.set_background_color(arcade.color.BLACK)
+
+    # ================= TIME FORMATTER =================
+    def format_time(self, seconds):
+        minutes = int(seconds // 60)
+        seconds = seconds % 60
+        return f"{minutes:02d}:{seconds:06.3f}"
 
     def on_draw(self):
         self.clear()
 
-        # ================= DRAW TRACK =================
         first_driver_df = next(iter(self.drivers_data.values()))
 
+        # ================= TRACK BASE (ASPHALT) =================
         for i in range(len(first_driver_df) - 1):
             x1 = first_driver_df.iloc[i]["screen_x"]
             y1 = first_driver_df.iloc[i]["screen_y"]
-            x2 = first_driver_df.iloc[i+1]["screen_x"]
-            y2 = first_driver_df.iloc[i+1]["screen_y"]
+            x2 = first_driver_df.iloc[i + 1]["screen_x"]
+            y2 = first_driver_df.iloc[i + 1]["screen_y"]
 
             arcade.draw_line(
                 x1, y1,
                 x2, y2,
-                TRACK_COLOR,
-                TRACK_WIDTH
+                TRACK_BASE_COLOR,
+                TRACK_BASE_WIDTH
+            )
+
+        # ================= RACING LINE =================
+        for i in range(0, len(first_driver_df) - 1, 2):
+            x1 = first_driver_df.iloc[i]["screen_x"]
+            y1 = first_driver_df.iloc[i]["screen_y"]
+            x2 = first_driver_df.iloc[i + 1]["screen_x"]
+            y2 = first_driver_df.iloc[i + 1]["screen_y"]
+
+            arcade.draw_line(
+                x1, y1,
+                x2, y2,
+                TRACK_LINE_COLOR,
+                TRACK_LINE_WIDTH
             )
 
         # ================= START / FINISH LINE =================
@@ -63,8 +89,16 @@ class TrackView(arcade.Window):
         if length != 0:
             px = -dy / length
             py = dx / length
+            LINE_HALF = 14
 
-            LINE_HALF = 10
+            arcade.draw_line(
+                sf_x1 + px * LINE_HALF,
+                sf_y1 + py * LINE_HALF,
+                sf_x1 - px * LINE_HALF,
+                sf_y1 - py * LINE_HALF,
+                arcade.color.BLACK,
+                6
+            )
 
             arcade.draw_line(
                 sf_x1 + px * LINE_HALF,
@@ -78,44 +112,51 @@ class TrackView(arcade.Window):
         # ================= DRAW CARS =================
         for driver, df in self.drivers_data.items():
             idx = self.driver_indices[driver]
-
             x = df.iloc[idx]["screen_x"]
             y = df.iloc[idx]["screen_y"]
 
             color = DRIVER_COLORS.get(driver, arcade.color.WHITE)
 
-            # Car body
-            arcade.draw_circle_filled(x, y, 6, color)
-
-            # Thin outline so car does NOT merge with track
-            arcade.draw_circle_outline(
-                x, y,
-                6,
-                arcade.color.BLACK,
-                2
-            )
+            arcade.draw_circle_outline(x, y, 7, arcade.color.BLACK, 2)
+            arcade.draw_circle_filled(x, y, 5, color)
 
         # ================= HUD =================
         arcade.draw_text(
-            f"Speed {self.speed_multiplier:.2f}x",
+            f"Speed  {self.speed_multiplier:.2f}x",
             20,
-            WINDOW_HEIGHT - 30,
+            WINDOW_HEIGHT - 32,
             arcade.color.WHITE,
-            14
+            15,
+            bold=True
+        )
+
+        # ===== TIMER (TOP-RIGHT) =====
+        time_text = self.format_time(self.elapsed_time)
+        arcade.draw_text(
+            f"Time  {time_text}",
+            WINDOW_WIDTH - 230,
+            WINDOW_HEIGHT - 32,
+            arcade.color.WHITE,
+            15,
+            bold=True
         )
 
         if self.paused:
             arcade.draw_text(
                 "PAUSED",
-                WINDOW_WIDTH // 2 - 35,
-                WINDOW_HEIGHT - 35,
+                WINDOW_WIDTH // 2 - 38,
+                WINDOW_HEIGHT - 38,
                 arcade.color.WHITE,
-                14
+                16,
+                bold=True
             )
 
     def on_update(self, delta_time):
         if self.paused:
             return
+
+        # ===== ADVANCE TIMER =====
+        self.elapsed_time += delta_time * self.speed_multiplier
 
         for driver, df in self.drivers_data.items():
             idx = self.driver_indices[driver]
@@ -123,6 +164,7 @@ class TrackView(arcade.Window):
 
             if idx >= len(df):
                 idx = 0
+                self.elapsed_time = 0.0  # reset on loop
 
             self.driver_indices[driver] = int(idx)
 
