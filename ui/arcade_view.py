@@ -11,15 +11,15 @@ class TrackView(arcade.Window):
 
         self.telemetry_df = telemetry_df
         self.current_index = 0
-        self.speed_multiplier = 2.0 # replay speed (can be float)
+        self.speed_multiplier = 1.0
+        self.paused = False
 
         arcade.set_background_color(arcade.color.BLACK)
 
     def on_draw(self):
-        # IMPORTANT: use clear(), NOT start_render()
         self.clear()
 
-        # Draw track path
+        # Draw track
         for i in range(len(self.telemetry_df) - 1):
             x1 = self.telemetry_df.iloc[i]["screen_x"]
             y1 = self.telemetry_df.iloc[i]["screen_y"]
@@ -33,7 +33,7 @@ class TrackView(arcade.Window):
                 2
             )
 
-        # Draw car (red dot)
+        # Draw car
         car_x = self.telemetry_df.iloc[int(self.current_index)]["screen_x"]
         car_y = self.telemetry_df.iloc[int(self.current_index)]["screen_y"]
 
@@ -44,9 +44,44 @@ class TrackView(arcade.Window):
             arcade.color.RED
         )
 
+        # Speed HUD (always visible)
+        arcade.draw_text(
+            f"Speed: {self.speed_multiplier:.2f}x",
+            20,
+            WINDOW_HEIGHT - 30,
+            arcade.color.WHITE,
+            14
+        )
+
+        # Pause indicator
+        if self.paused:
+            arcade.draw_text(
+                "PAUSED",
+                WINDOW_WIDTH // 2 - 40,
+                WINDOW_HEIGHT - 40,
+                arcade.color.YELLOW,
+                16
+            )
+
     def on_update(self, delta_time):
-        # Advance replay
+        if self.paused:
+            return
+
         self.current_index += self.speed_multiplier
 
         if self.current_index >= len(self.telemetry_df):
-            self.current_index = 0  # loop replay
+            self.current_index = 0
+
+    def on_key_press(self, key, modifiers):
+        if key == arcade.key.SPACE:
+            self.paused = not self.paused
+
+        elif key == arcade.key.UP:
+            self.speed_multiplier += 0.25
+            if self.speed_multiplier > 10:
+                self.speed_multiplier = 10
+
+        elif key == arcade.key.DOWN:
+            self.speed_multiplier -= 0.25
+            if self.speed_multiplier < 0.25:
+                self.speed_multiplier = 0.25
