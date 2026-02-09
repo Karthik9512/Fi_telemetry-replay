@@ -299,7 +299,8 @@ class TrackView(arcade.Window):
         )
 
         # Telemetry graphs
-        graph_start_y = WINDOW_HEIGHT - 110
+        # Telemetry graphs
+        graph_start_y = WINDOW_HEIGHT - 200
         
         # Speed Graph
         self._draw_telemetry_graph(
@@ -359,8 +360,8 @@ class TrackView(arcade.Window):
         # Label
         arcade.draw_text(
             "THROTTLE & BRAKE (%)",
-            x + 10, y + height - 20,
-            arcade.color.WHITE, 11, bold=True
+            x + 8, y + height - 18,
+            arcade.color.WHITE, 10, bold=True
         )
         
         # Center line (zero line) - most important visual element
@@ -385,17 +386,17 @@ class TrackView(arcade.Window):
                 (40, 40, 40), 1
             )
         
-        # Y-axis labels
+        # Y-axis labels (Right aligned to avoid title overlap)
         arcade.draw_text(
-            "+100", x + 5, y + height - 12,
+            "+100", x + width - 35, y + height - 12,
             (0, 220, 0), 8
         )
         arcade.draw_text(
-            "0", x + 5, center_y - 4,
+            "0", x + width - 25, center_y - 4,
             (160, 160, 160), 8
         )
         arcade.draw_text(
-            "-100", x + 5, y + 3,
+            "-100", x + width - 35, y + 3,
             (220, 0, 0), 8
         )
         
