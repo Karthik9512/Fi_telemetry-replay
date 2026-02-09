@@ -1,0 +1,113 @@
+import arcade
+
+from data.fetch_data import load_race, get_multiple_drivers_telemetry
+from ui.arcade_view import TrackView
+
+
+# ================= CIRCUIT → FASTF1 MAP =================
+CIRCUIT_MAP = {
+    "Monza": "Italian Grand Prix",
+    "Silverstone": "British Grand Prix",
+    "Spa": "Belgian Grand Prix",
+    "Suzuka": "Japanese Grand Prix",
+}
+
+
+# ================= TEAM NORMALIZATION MAP =================
+TEAM_NAME_MAP = {
+    # Ferrari
+    "Ferrari": "Ferrari",
+
+    # Red Bull
+    "Red Bull Racing": "Red Bull",
+    "Oracle Red Bull Racing": "Red Bull",
+
+    # Mercedes
+    "Mercedes": "Mercedes",
+    "Mercedes AMG F1": "Mercedes",
+    "Mercedes-AMG Petronas F1 Team": "Mercedes",
+
+    # McLaren
+    "McLaren": "McLaren",
+    "McLaren F1 Team": "McLaren",
+
+    # Aston Martin
+    "Aston Martin": "Aston Martin",
+    "Aston Martin Aramco F1 Team": "Aston Martin",
+
+    # Alpine
+    "Alpine": "Alpine",
+    "Alpine F1 Team": "Alpine",
+
+    # Williams
+    "Williams": "Williams",
+    "Williams Racing": "Williams",
+
+    # AlphaTauri / RB
+    "Scuderia AlphaTauri": "AlphaTauri",
+    "AlphaTauri": "AlphaTauri",
+    "RB F1 Team": "AlphaTauri",
+    "Visa Cash App RB": "AlphaTauri",
+
+    # Alfa Romeo / Sauber
+    "Alfa Romeo": "Alfa Romeo",
+    "Alfa Romeo F1 Team": "Alfa Romeo",
+    "Stake F1 Team": "Alfa Romeo",
+    "Stake F1 Team Kick Sauber": "Alfa Romeo",
+
+    # Haas
+    "Haas": "Haas",
+    "Haas F1 Team": "Haas",
+}
+
+
+# ================= TEAM FILTER =================
+def get_drivers_by_team(session, selected_team):
+    results = session.results.copy()
+
+    results["NormalizedTeam"] = results["TeamName"].apply(
+        lambda name: TEAM_NAME_MAP.get(name, name)
+    )
+
+    if selected_team == "ALL":
+        return results["DriverNumber"].astype(str).tolist()
+
+    return results[
+        results["NormalizedTeam"] == selected_team
+    ]["DriverNumber"].astype(str).tolist()
+
+
+# ================= REPLAY LAUNCHER =================
+def start_replay(circuit: str, team: str):
+    print(f"Starting replay for circuit: {circuit}, team: {team}")
+
+    year = 2024
+    session_type = "R"
+
+    # ✅ CIRCUIT MAP IS NOW DEFINED
+    race_name = CIRCUIT_MAP.get(circuit)
+    if not race_name:
+        raise ValueError(f"Unsupported circuit: {circuit}")
+
+    # Load FastF1 session
+    session = load_race(year, race_name, session_type)
+
+    # Filter drivers
+    drivers = get_drivers_by_team(session, team)
+    if not drivers:
+        raise ValueError(f"No drivers found for team: {team}")
+
+    print(f"Drivers selected: {drivers}")
+
+    # ✅ DRIVER → TEAM MAP
+    driver_team_map = {
+        str(row.DriverNumber): TEAM_NAME_MAP.get(row.TeamName, row.TeamName)
+        for _, row in session.results.iterrows()
+    }
+
+    # Load telemetry
+    drivers_data = get_multiple_drivers_telemetry(session, drivers)
+
+    # ✅ PASS BOTH ARGUMENTS
+    TrackView(drivers_data, driver_team_map)
+    arcade.run()

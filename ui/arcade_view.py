@@ -1,209 +1,800 @@
 import arcade
 import math
+from collections import deque
 
 # ================= WINDOW =================
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 800
-WINDOW_TITLE = "F1 Telemetry Replay"
+WINDOW_WIDTH = 1600
+WINDOW_HEIGHT = 900
+WINDOW_TITLE = "F1 Telemetry Replay - Driver Focus Mode"
+
+# ================= LAYOUT (TASK 1: Collision-Free) =================
+LEADERBOARD_WIDTH = 280
+LEADERBOARD_PADDING = 20
+TRACK_VIEWPORT_WIDTH = WINDOW_WIDTH - LEADERBOARD_WIDTH - LEADERBOARD_PADDING
+TRACK_VIEWPORT_HEIGHT = WINDOW_HEIGHT
+TRACK_PADDING = 90
+
+# ================= HUD STYLE =================
+HUD_BG_COLOR = (30, 30, 30, 220)
+HUD_SELECTED_BG = (50, 80, 120, 180)  # Blue tint for selected driver
+HUD_ROW_HEIGHT = 18
 
 # ================= TRACK STYLE =================
-TRACK_BASE_COLOR = arcade.color.DARK_SLATE_GRAY
-TRACK_LINE_COLOR = arcade.color.LIGHT_GRAY
-
+TRACK_BASE_COLOR = (60, 60, 60)
+TRACK_LINE_COLOR = (120, 120, 120)
 TRACK_BASE_WIDTH = 10
 TRACK_LINE_WIDTH = 4
 
-START_FINISH_INDEX = 0
+# ================= CAMERA (TASK 2) =================
+CAMERA_ZOOM_FACTOR = 1.2
+CAMERA_SMOOTH_SPEED = 0.1
 
-# ================= DRIVER COLORS =================
-DRIVER_COLORS = {
-    "16": arcade.color.RED,        # Leclerc
-    "55": arcade.color.YELLOW,     # Sainz
-    "1": arcade.color.BLUE,        # Verstappen
+# ================= TELEMETRY (DRIVER FOCUS MODE) =================
+TELEMETRY_PANEL_BG = (15, 15, 15, 240)
+TELEMETRY_GRAPH_HEIGHT = 100
+TELEMETRY_GRAPH_MARGIN = 12
+TELEMETRY_HISTORY_SECONDS = 10  # Show last 10 seconds
+
+# ================= MINI TRACK =================
+MINI_TRACK_SIZE = 150
+MINI_TRACK_MARGIN = 40
+
+# ================= RACE CONFIG =================
+TOTAL_LAPS = 3
+
+# ================= TEAM COLORS =================
+TEAM_COLORS = {
+    "Red Bull": (6, 0, 239),
+    "Ferrari": (220, 0, 0),
+    "Mercedes": (192, 192, 192),
+    "McLaren": (255, 135, 0),
+    "Aston Martin": (0, 111, 98),
+    "Alpine": (255, 95, 190),
+    "Williams": (0, 90, 255),
+    "RB": (242, 242, 242),
+    "Haas": (177, 18, 38),
+    "Sauber": (0, 255, 135),
 }
 
 
 class TrackView(arcade.Window):
-    def __init__(self, drivers_data):
+    def __init__(self, drivers_data, driver_team_map):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE)
 
+        # Original data
         self.drivers_data = drivers_data
-        self.driver_indices = {driver: 0 for driver in drivers_data.keys()}
+        self.driver_team_map = driver_team_map
+
+        # Simulation state
+        self.driver_indices = {d: 0.0 for d in drivers_data}
+        self.driver_times = {d: 0.0 for d in drivers_data}
+        self.driver_laps = {d: 1 for d in drivers_data}
+
         self.speed_multiplier = 1.0
         self.paused = False
+        self.elapsed_time = 0.0
 
-        # ===== TIMER =====
-        self.elapsed_time = 0.0  # seconds
+        # Camera focus state
+        self.focused_driver = None  # Currently focused driver (None = overview)
+        self.camera_offset_x = 0.0  # Current camera offset X
+        self.camera_offset_y = 0.0  # Current camera offset Y
+        self.camera_zoom = 1.0      # Current zoom level
+        
+        # Leaderboard click detection (store bounding boxes)
+        self.leaderboard_rows = {}  # {driver: (x1, y1, x2, y2)}
+
+        # DRIVER FOCUS MODE STATE
+        self.focus_mode = False  # True = telemetry view, False = normal view
+        
+        # Telemetry history buffers for scrolling graphs
+        self.telemetry_history = {
+            'speed': deque(maxlen=500),
+            'throttle': deque(maxlen=500),
+            'brake': deque(maxlen=500),
+            'gear': deque(maxlen=500),
+        }
+
+        # Rescale track coordinates to fit within viewport
+        self._rescale_track_to_viewport()
 
         arcade.set_background_color(arcade.color.BLACK)
 
-    # ================= TIME FORMAT =================
-    def format_time(self, seconds):
-        minutes = int(seconds // 60)
-        seconds = seconds % 60
-        return f"{minutes:02d}:{seconds:06.3f}"
+    def _rescale_track_to_viewport(self):
+        """
+        Rescale all track coordinates to fit within the reserved track viewport.
+        """
+        for driver, df in self.drivers_data.items():
+            min_x = df["screen_x"].min()
+            max_x = df["screen_x"].max()
+            min_y = df["screen_y"].min()
+            max_y = df["screen_y"].max()
 
-    # ================= LEADERBOARD SORT =================
+            df["screen_x"] = (
+                (df["screen_x"] - min_x) / (max_x - min_x) * 
+                (TRACK_VIEWPORT_WIDTH - 2 * TRACK_PADDING) + TRACK_PADDING
+            )
+            df["screen_y"] = (
+                (df["screen_y"] - min_y) / (max_y - min_y) * 
+                (TRACK_VIEWPORT_HEIGHT - 2 * TRACK_PADDING) + TRACK_PADDING
+            )
+
+    def format_time(self, seconds):
+        m = int(seconds // 60)
+        s = seconds % 60
+        return f"{m:02d}:{s:06.3f}"
+
     def get_leaderboard(self):
-        """
-        Sort drivers by progress (higher index = ahead)
-        """
         return sorted(
             self.driver_indices.items(),
-            key=lambda item: item[1],
+            key=lambda x: (self.driver_laps[x[0]], x[1]),
             reverse=True
         )
+
+    def get_time_gaps(self, leaderboard):
+        leader = leaderboard[0][0]
+        leader_time = self.driver_times[leader]
+
+        gaps = {}
+        for i, (driver, _) in enumerate(leaderboard):
+            if i == 0:
+                gaps[driver] = "LEADER"
+            else:
+                gap = max(self.driver_times[driver] - leader_time, 0.0)
+                gaps[driver] = f"+{gap:.3f}s"
+        return gaps
+
+    def _update_camera(self, delta_time):
+        """
+        Smoothly interpolate camera to focus on the selected driver.
+        """
+        # In focus mode, camera is not used (we use mini track instead)
+        if self.focus_mode:
+            self.camera_offset_x = 0.0
+            self.camera_offset_y = 0.0
+            self.camera_zoom = 1.0
+            return
+
+        if self.focused_driver and self.focused_driver in self.drivers_data:
+            df = self.drivers_data[self.focused_driver]
+            idx = int(self.driver_indices[self.focused_driver])
+            target_x = df.iloc[idx]["screen_x"]
+            target_y = df.iloc[idx]["screen_y"]
+
+            target_offset_x = TRACK_VIEWPORT_WIDTH / 2 - target_x
+            target_offset_y = WINDOW_HEIGHT / 2 - target_y
+            target_zoom = CAMERA_ZOOM_FACTOR
+        else:
+            target_offset_x = 0.0
+            target_offset_y = 0.0
+            target_zoom = 1.0
+
+        self.camera_offset_x += (target_offset_x - self.camera_offset_x) * CAMERA_SMOOTH_SPEED
+        self.camera_offset_y += (target_offset_y - self.camera_offset_y) * CAMERA_SMOOTH_SPEED
+        self.camera_zoom += (target_zoom - self.camera_zoom) * CAMERA_SMOOTH_SPEED
+
+    def _apply_camera_transform(self, x, y):
+        """
+        Apply camera offset and zoom to a coordinate.
+        """
+        center_x = TRACK_VIEWPORT_WIDTH / 2
+        center_y = WINDOW_HEIGHT / 2
+
+        x = center_x + (x - center_x) * self.camera_zoom
+        y = center_y + (y - center_y) * self.camera_zoom
+
+        x += self.camera_offset_x
+        y += self.camera_offset_y
+
+        return x, y
 
     def on_draw(self):
         self.clear()
 
-        first_driver_df = next(iter(self.drivers_data.values()))
+        if self.focus_mode and self.focused_driver:
+            self._draw_focus_mode()
+        else:
+            self._draw_normal_mode()
 
-        # ================= TRACK BASE =================
-        for i in range(len(first_driver_df) - 1):
-            x1 = first_driver_df.iloc[i]["screen_x"]
-            y1 = first_driver_df.iloc[i]["screen_y"]
-            x2 = first_driver_df.iloc[i + 1]["screen_x"]
-            y2 = first_driver_df.iloc[i + 1]["screen_y"]
+    def _draw_normal_mode(self):
+        """Normal track view with camera controls."""
+        df0 = next(iter(self.drivers_data.values()))
 
-            arcade.draw_line(
-                x1, y1, x2, y2,
-                TRACK_BASE_COLOR,
-                TRACK_BASE_WIDTH
+        # Track
+        for i in range(len(df0) - 1):
+            x1, y1 = self._apply_camera_transform(
+                df0.iloc[i]["screen_x"], df0.iloc[i]["screen_y"]
             )
-
-        # ================= RACING LINE =================
-        for i in range(0, len(first_driver_df) - 1, 2):
-            x1 = first_driver_df.iloc[i]["screen_x"]
-            y1 = first_driver_df.iloc[i]["screen_y"]
-            x2 = first_driver_df.iloc[i + 1]["screen_x"]
-            y2 = first_driver_df.iloc[i + 1]["screen_y"]
-
-            arcade.draw_line(
-                x1, y1, x2, y2,
-                TRACK_LINE_COLOR,
-                TRACK_LINE_WIDTH
+            x2, y2 = self._apply_camera_transform(
+                df0.iloc[i + 1]["screen_x"], df0.iloc[i + 1]["screen_y"]
             )
+            arcade.draw_line(x1, y1, x2, y2, TRACK_BASE_COLOR, TRACK_BASE_WIDTH)
 
-        # ================= START / FINISH =================
-        sf_x1 = first_driver_df.iloc[START_FINISH_INDEX]["screen_x"]
-        sf_y1 = first_driver_df.iloc[START_FINISH_INDEX]["screen_y"]
-        sf_x2 = first_driver_df.iloc[START_FINISH_INDEX + 1]["screen_x"]
-        sf_y2 = first_driver_df.iloc[START_FINISH_INDEX + 1]["screen_y"]
-
-        dx = sf_x2 - sf_x1
-        dy = sf_y2 - sf_y1
-        length = math.sqrt(dx * dx + dy * dy)
-
-        if length != 0:
-            px = -dy / length
-            py = dx / length
-            half = 14
-
-            arcade.draw_line(
-                sf_x1 + px * half, sf_y1 + py * half,
-                sf_x1 - px * half, sf_y1 - py * half,
-                arcade.color.BLACK, 6
+        for i in range(0, len(df0) - 1, 2):
+            x1, y1 = self._apply_camera_transform(
+                df0.iloc[i]["screen_x"], df0.iloc[i]["screen_y"]
             )
-
-            arcade.draw_line(
-                sf_x1 + px * half, sf_y1 + py * half,
-                sf_x1 - px * half, sf_y1 - py * half,
-                arcade.color.WHITE, 3
+            x2, y2 = self._apply_camera_transform(
+                df0.iloc[i + 1]["screen_x"], df0.iloc[i + 1]["screen_y"]
             )
+            arcade.draw_line(x1, y1, x2, y2, TRACK_LINE_COLOR, TRACK_LINE_WIDTH)
 
-        # ================= DRAW CARS =================
+        # Start/Finish line
+        x0, y0 = df0.iloc[0][["screen_x", "screen_y"]]
+        x1, y1 = df0.iloc[1][["screen_x", "screen_y"]]
+
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy)
+        px, py = -dy / length, dx / length
+
+        start_x1, start_y1 = self._apply_camera_transform(x0 + px * 20, y0 + py * 20)
+        start_x2, start_y2 = self._apply_camera_transform(x0 - px * 20, y0 - py * 20)
+        arcade.draw_line(start_x1, start_y1, start_x2, start_y2, arcade.color.WHITE, 4)
+
+        # Cars
         for driver, df in self.drivers_data.items():
-            idx = self.driver_indices[driver]
-            x = df.iloc[idx]["screen_x"]
-            y = df.iloc[idx]["screen_y"]
+            idx = int(self.driver_indices[driver])
+            x, y = df.iloc[idx][["screen_x", "screen_y"]]
+            x, y = self._apply_camera_transform(x, y)
 
-            color = DRIVER_COLORS.get(driver, arcade.color.WHITE)
+            team = self.driver_team_map.get(driver, "")
+            color = TEAM_COLORS.get(team, arcade.color.WHITE)
+
+            if self.focused_driver and driver != self.focused_driver:
+                color = tuple(int(c * 0.4) for c in color[:3])
 
             arcade.draw_circle_outline(x, y, 7, arcade.color.BLACK, 2)
             arcade.draw_circle_filled(x, y, 5, color)
 
-        # ================= HUD (TOP-LEFT) =================
+        # Leaderboard
+        self._draw_leaderboard()
+
+        # Info
         arcade.draw_text(
-            f"Speed  {self.speed_multiplier:.2f}x",
-            20,
-            WINDOW_HEIGHT - 32,
-            arcade.color.WHITE,
-            15,
-            bold=True
+            f"Speed {self.speed_multiplier:.2f}x",
+            20, WINDOW_HEIGHT - 30,
+            arcade.color.WHITE, 14, bold=True
         )
-
-        # ================= TIMER (TOP-RIGHT) =================
-        time_text = self.format_time(self.elapsed_time)
-        arcade.draw_text(
-            f"Time  {time_text}",
-            WINDOW_WIDTH - 230,
-            WINDOW_HEIGHT - 32,
-            arcade.color.WHITE,
-            15,
-            bold=True
-        )
-
-        # ================= LEADERBOARD (BOTTOM-RIGHT) =================
-        leaderboard = self.get_leaderboard()
-
-        start_x = WINDOW_WIDTH - 230
-        start_y = 220           # distance from bottom
-        line_height = 18
-
-        arcade.draw_text(
-            "Leaderboard",
-            start_x,
-            start_y + (len(leaderboard) + 1) * line_height,
-            arcade.color.WHITE,
-            14,
-            bold=True
-        )
-
-        for pos, (driver, _) in enumerate(leaderboard, start=1):
-            color = DRIVER_COLORS.get(driver, arcade.color.WHITE)
-
-            arcade.draw_text(
-                f"{pos}. Driver {driver}",
-                start_x,
-                start_y + (len(leaderboard) - pos) * line_height,
-                color,
-                13
-            )
 
         if self.paused:
             arcade.draw_text(
                 "PAUSED",
-                WINDOW_WIDTH // 2 - 38,
-                WINDOW_HEIGHT - 38,
+                TRACK_VIEWPORT_WIDTH // 2 - 40,
+                WINDOW_HEIGHT - 40,
                 arcade.color.WHITE,
-                16,
-                bold=True
+                16
             )
+
+        if self.focused_driver:
+            arcade.draw_text(
+                f"Following: {self.focused_driver}",
+                20, WINDOW_HEIGHT - 55,
+                arcade.color.YELLOW, 12, italic=True
+            )
+
+    def _draw_focus_mode(self):
+        """
+        Draw focus mode with telemetry graphs and minimized track.
+        """
+        # Telemetry panel background
+        arcade.draw_lrbt_rectangle_filled(
+            0, WINDOW_WIDTH - LEADERBOARD_WIDTH - LEADERBOARD_PADDING,
+            0, WINDOW_HEIGHT,
+            TELEMETRY_PANEL_BG
+        )
+
+        # Driver info header
+        team = self.driver_team_map.get(self.focused_driver, "")
+        team_color = TEAM_COLORS.get(team, arcade.color.WHITE)
+        
+        arcade.draw_text(
+            f"DRIVER {self.focused_driver}",
+            30, WINDOW_HEIGHT - 40,
+            team_color, 20, bold=True
+        )
+        
+        arcade.draw_text(
+            team,
+            30, WINDOW_HEIGHT - 70,
+            arcade.color.LIGHT_GRAY, 14
+        )
+
+        # Telemetry graphs
+        graph_start_y = WINDOW_HEIGHT - 110
+        
+        # Speed Graph
+        self._draw_telemetry_graph(
+            'speed', "SPEED (km/h)", 
+            30, graph_start_y, 
+            TRACK_VIEWPORT_WIDTH - 60, TELEMETRY_GRAPH_HEIGHT,
+            team_color, 0, 350
+        )
+        
+        # Combined Throttle & Brake Graph (NEW!)
+        self._draw_combined_throttle_brake_graph(
+            30, graph_start_y - TELEMETRY_GRAPH_HEIGHT - TELEMETRY_GRAPH_MARGIN,
+            TRACK_VIEWPORT_WIDTH - 60, TELEMETRY_GRAPH_HEIGHT
+        )
+        
+        # Gear Graph
+        self._draw_telemetry_graph(
+            'gear', "GEAR", 
+            30, graph_start_y - 2 * (TELEMETRY_GRAPH_HEIGHT + TELEMETRY_GRAPH_MARGIN),
+            TRACK_VIEWPORT_WIDTH - 60, TELEMETRY_GRAPH_HEIGHT,
+            arcade.color.CYAN, 0, 8, step_graph=True
+        )
+
+        # Minimized track
+        self._draw_mini_track()
+
+        # Leaderboard
+        self._draw_leaderboard()
+
+        # Controls info
+        arcade.draw_text(
+            "Press ESC to exit focus mode",
+            30, 30,
+            arcade.color.GRAY, 12, italic=True
+        )
+
+    def _draw_combined_throttle_brake_graph(self, x, y, width, height):
+        """
+        Draw combined throttle and brake graph with center zero line.
+        Professional F1 broadcast style visualization with filled areas.
+        
+        Throttle: plotted ABOVE center line (0 to +100%)
+        Brake: plotted BELOW center line (0 to -100%)
+        """
+        # Background - darker for better contrast
+        arcade.draw_lrbt_rectangle_filled(
+            x, x + width, y, y + height,
+            (15, 15, 15, 220)
+        )
+        
+        # Border
+        arcade.draw_lrbt_rectangle_outline(
+            x, x + width, y, y + height,
+            (80, 80, 80), 2
+        )
+        
+        # Label
+        arcade.draw_text(
+            "THROTTLE & BRAKE (%)",
+            x + 10, y + height - 20,
+            arcade.color.WHITE, 11, bold=True
+        )
+        
+        # Center line (zero line) - most important visual element
+        center_y = y + height / 2
+        arcade.draw_line(
+            x, center_y, x + width, center_y,
+            (120, 120, 120), 2
+        )
+        
+        # Grid lines (horizontal) - subtle
+        for i in range(1, 3):
+            # Above center (throttle zone)
+            grid_y = center_y + (height / 2) * (i / 2)
+            arcade.draw_line(
+                x, grid_y, x + width, grid_y,
+                (40, 40, 40), 1
+            )
+            # Below center (brake zone)
+            grid_y = center_y - (height / 2) * (i / 2)
+            arcade.draw_line(
+                x, grid_y, x + width, grid_y,
+                (40, 40, 40), 1
+            )
+        
+        # Y-axis labels
+        arcade.draw_text(
+            "+100", x + 5, y + height - 12,
+            (0, 220, 0), 8
+        )
+        arcade.draw_text(
+            "0", x + 5, center_y - 4,
+            (160, 160, 160), 8
+        )
+        arcade.draw_text(
+            "-100", x + 5, y + 3,
+            (220, 0, 0), 8
+        )
+        
+        # Get data
+        throttle_data = list(self.telemetry_history['throttle'])
+        brake_data = list(self.telemetry_history['brake'])
+        
+        if len(throttle_data) < 2 or len(brake_data) < 2:
+            return
+        
+        current_time = self.elapsed_time
+        time_window_start = current_time - TELEMETRY_HISTORY_SECONDS
+        
+        # Draw THROTTLE (above center line) with filled area
+        throttle_points = []
+        for time_val, value in throttle_data:
+            time_ratio = (time_val - time_window_start) / TELEMETRY_HISTORY_SECONDS
+            px = x + (time_ratio * width)
+            
+            value_ratio = value / 100.0
+            py = center_y + (value_ratio * height / 2)
+            
+            throttle_points.append((px, py))
+        
+        # Draw filled area under throttle line
+        if len(throttle_points) >= 2:
+            # Create polygon points for filled area
+            fill_points = [(throttle_points[0][0], center_y)]  # Start at center line
+            fill_points.extend(throttle_points)  # Add all data points
+            fill_points.append((throttle_points[-1][0], center_y))  # End at center line
+            
+            # Draw filled area with transparency
+            arcade.draw_polygon_filled(fill_points, (0, 200, 0, 80))
+            
+            # Draw line on top for clarity
+            for i in range(len(throttle_points) - 1):
+                x1, y1 = throttle_points[i]
+                x2, y2 = throttle_points[i + 1]
+                arcade.draw_line(x1, y1, x2, y2, (0, 255, 0), 2)
+        
+        # Draw BRAKE (below center line) with filled area
+        brake_points = []
+        for time_val, value in brake_data:
+            time_ratio = (time_val - time_window_start) / TELEMETRY_HISTORY_SECONDS
+            px = x + (time_ratio * width)
+            
+            value_ratio = value / 100.0
+            py = center_y - (value_ratio * height / 2)
+            
+            brake_points.append((px, py))
+        
+        # Draw filled area under brake line
+        if len(brake_points) >= 2:
+            # Create polygon points for filled area
+            fill_points = [(brake_points[0][0], center_y)]  # Start at center line
+            fill_points.extend(brake_points)  # Add all data points
+            fill_points.append((brake_points[-1][0], center_y))  # End at center line
+            
+            # Draw filled area with transparency
+            arcade.draw_polygon_filled(fill_points, (200, 0, 0, 80))
+            
+            # Draw line on top for clarity
+            for i in range(len(brake_points) - 1):
+                x1, y1 = brake_points[i]
+                x2, y2 = brake_points[i + 1]
+                arcade.draw_line(x1, y1, x2, y2, (255, 0, 0), 2)
+        
+        # Current value indicators
+        if throttle_points:
+            last_x, last_y = throttle_points[-1]
+            arcade.draw_circle_filled(last_x, last_y, 4, (0, 255, 0))
+            
+            current_throttle = throttle_data[-1][1]
+            arcade.draw_text(
+                f"T: {current_throttle:.0f}%",
+                x + width - 80, y + height - 25,
+                (0, 255, 0), 12, bold=True
+            )
+        
+        if brake_points:
+            last_x, last_y = brake_points[-1]
+            arcade.draw_circle_filled(last_x, last_y, 4, (255, 0, 0))
+            
+            current_brake = brake_data[-1][1]
+            arcade.draw_text(
+                f"B: {current_brake:.0f}%",
+                x + width - 80, y + height - 45,
+                (255, 0, 0), 12, bold=True
+            )
+
+    def _draw_telemetry_graph(self, data_key, label, x, y, width, height, color, min_val, max_val, step_graph=False):
+        """
+        Draw a single telemetry graph with scrolling effect.
+        """
+        # Background
+        arcade.draw_lrbt_rectangle_filled(
+            x, x + width, y, y + height,
+            (25, 25, 25, 200)
+        )
+        
+        # Border
+        arcade.draw_lrbt_rectangle_outline(
+            x, x + width, y, y + height,
+            (60, 60, 60), 2
+        )
+        
+        # Label
+        arcade.draw_text(
+            label,
+            x + 10, y + height - 25,
+            arcade.color.WHITE, 12, bold=True
+        )
+        
+        # Grid lines
+        for i in range(5):
+            grid_y = y + (height * i / 4)
+            arcade.draw_line(
+                x, grid_y, x + width, grid_y,
+                (50, 50, 50), 1
+            )
+        
+        # Get data
+        data = list(self.telemetry_history[data_key])
+        
+        if len(data) < 2:
+            return
+        
+        current_time = self.elapsed_time
+        time_window_start = current_time - TELEMETRY_HISTORY_SECONDS
+        
+        # Map data to screen coordinates
+        points = []
+        for time_val, value in data:
+            time_ratio = (time_val - time_window_start) / TELEMETRY_HISTORY_SECONDS
+            px = x + (time_ratio * width)
+            
+            value_ratio = (value - min_val) / (max_val - min_val)
+            py = y + (value_ratio * height)
+            
+            points.append((px, py))
+        
+        # Draw line
+        if step_graph:
+            for i in range(len(points) - 1):
+                x1, y1 = points[i]
+                x2, y2 = points[i + 1]
+                arcade.draw_line(x1, y1, x2, y1, color, 2)
+                arcade.draw_line(x2, y1, x2, y2, color, 2)
+        else:
+            for i in range(len(points) - 1):
+                x1, y1 = points[i]
+                x2, y2 = points[i + 1]
+                arcade.draw_line(x1, y1, x2, y2, color, 3)
+        
+        # Current value indicator
+        if points:
+            last_x, last_y = points[-1]
+            arcade.draw_circle_filled(last_x, last_y, 4, color)
+            
+            current_val = data[-1][1]
+            arcade.draw_text(
+                f"{current_val:.0f}",
+                x + width - 60, y + height - 25,
+                color, 14, bold=True
+            )
+
+    def _draw_mini_track(self):
+        """
+        Draw minimized track in bottom-right corner.
+        """
+        mini_x = WINDOW_WIDTH - LEADERBOARD_WIDTH - LEADERBOARD_PADDING - MINI_TRACK_SIZE - MINI_TRACK_MARGIN
+        mini_y = MINI_TRACK_MARGIN
+        
+        # Background - darker with more opacity
+        arcade.draw_lrbt_rectangle_filled(
+            mini_x, mini_x + MINI_TRACK_SIZE,
+            mini_y, mini_y + MINI_TRACK_SIZE,
+            (10, 10, 10, 240)
+        )
+        
+        # Border - brighter for better definition
+        arcade.draw_lrbt_rectangle_outline(
+            mini_x, mini_x + MINI_TRACK_SIZE,
+            mini_y, mini_y + MINI_TRACK_SIZE,
+            (100, 100, 100), 2
+        )
+        
+        # Label
+        arcade.draw_text(
+            "TRACK",
+            mini_x + 10, mini_y + MINI_TRACK_SIZE - 20,
+            (180, 180, 180), 9, bold=True
+        )
+        
+        # Get track bounds
+        df0 = next(iter(self.drivers_data.values()))
+        min_x = df0["screen_x"].min()
+        max_x = df0["screen_x"].max()
+        min_y = df0["screen_y"].min()
+        max_y = df0["screen_y"].max()
+        
+        track_width = max_x - min_x
+        track_height = max_y - min_y
+        
+        # Better padding for track inside mini map
+        padding = 15
+        scale = min((MINI_TRACK_SIZE - 2 * padding) / track_width, (MINI_TRACK_SIZE - 2 * padding) / track_height)
+        
+        # Center the track in the mini map
+        scaled_width = track_width * scale
+        scaled_height = track_height * scale
+        offset_x = (MINI_TRACK_SIZE - scaled_width) / 2
+        offset_y = (MINI_TRACK_SIZE - scaled_height) / 2
+        
+        # Draw track outline with better visibility
+        for i in range(len(df0) - 1):
+            x1 = mini_x + offset_x + (df0.iloc[i]["screen_x"] - min_x) * scale
+            y1 = mini_y + offset_y + (df0.iloc[i]["screen_y"] - min_y) * scale
+            x2 = mini_x + offset_x + (df0.iloc[i + 1]["screen_x"] - min_x) * scale
+            y2 = mini_y + offset_y + (df0.iloc[i + 1]["screen_y"] - min_y) * scale
+            
+            arcade.draw_line(x1, y1, x2, y2, (100, 100, 100), 2)
+        
+        # Draw focused driver with glow effect
+        if self.focused_driver in self.drivers_data:
+            df = self.drivers_data[self.focused_driver]
+            idx = int(self.driver_indices[self.focused_driver])
+            
+            car_x = mini_x + offset_x + (df.iloc[idx]["screen_x"] - min_x) * scale
+            car_y = mini_y + offset_y + (df.iloc[idx]["screen_y"] - min_y) * scale
+            
+            team = self.driver_team_map.get(self.focused_driver, "")
+            color = TEAM_COLORS.get(team, arcade.color.WHITE)
+            
+            # Glow effect
+            arcade.draw_circle_filled(car_x, car_y, 7, (*color[:3], 100))
+            # Main car dot
+            arcade.draw_circle_filled(car_x, car_y, 5, color)
+            # Bright center
+            arcade.draw_circle_filled(car_x, car_y, 2, arcade.color.WHITE)
+
+    def _draw_leaderboard(self):
+        """Draw the leaderboard HUD."""
+        leaderboard = self.get_leaderboard()
+        gaps = self.get_time_gaps(leaderboard)
+
+        rows = len(leaderboard) + 3
+        hud_height = rows * HUD_ROW_HEIGHT + LEADERBOARD_PADDING * 2
+
+        left = TRACK_VIEWPORT_WIDTH + LEADERBOARD_PADDING
+        right = WINDOW_WIDTH - LEADERBOARD_PADDING
+        top = WINDOW_HEIGHT - LEADERBOARD_PADDING
+        bottom = top - hud_height
+
+        arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, HUD_BG_COLOR)
+
+        y = top - 28
+
+        arcade.draw_text(
+            f"Time: {self.format_time(self.elapsed_time)}",
+            left + LEADERBOARD_PADDING, y,
+            arcade.color.WHITE, 14
+        )
+
+        leader = leaderboard[0][0]
+        arcade.draw_text(
+            f"Lap: {self.driver_laps[leader]}/{TOTAL_LAPS}",
+            left + LEADERBOARD_PADDING, y - 20,
+            arcade.color.WHITE, 13
+        )
+
+        arcade.draw_text(
+            "Leaderboard",
+            left + LEADERBOARD_PADDING, y - 42,
+            arcade.color.WHITE, 14, bold=True
+        )
+
+        self.leaderboard_rows.clear()
+
+        for pos, (driver, _) in enumerate(leaderboard, start=1):
+            team = self.driver_team_map.get(driver, "")
+            color = TEAM_COLORS.get(team, arcade.color.WHITE)
+
+            row_y = y - 42 - pos * HUD_ROW_HEIGHT
+            row_x = left + LEADERBOARD_PADDING
+
+            if driver == self.focused_driver:
+                arcade.draw_lrbt_rectangle_filled(
+                    left, right, row_y - 2, row_y + 14, HUD_SELECTED_BG
+                )
+                color = tuple(min(int(c * 1.3), 255) for c in color[:3])
+
+            arcade.draw_text(
+                f"{pos}. {driver}  {gaps[driver]}",
+                row_x, row_y,
+                color,
+                12
+            )
+
+            self.leaderboard_rows[driver] = (
+                left, row_y - 2, right, row_y + 14
+            )
+
+    def _update_telemetry_history(self):
+        """Update telemetry history buffers for scrolling graphs."""
+        if not self.focus_mode or not self.focused_driver:
+            return
+
+        df = self.drivers_data[self.focused_driver]
+        idx = int(self.driver_indices[self.focused_driver])
+        
+        if idx >= len(df):
+            return
+        
+        current_time = self.elapsed_time
+        
+        speed = df.iloc[idx].get("Speed", 0)
+        throttle = df.iloc[idx].get("Throttle", 0)
+        brake = df.iloc[idx].get("Brake", 0)
+        gear = df.iloc[idx].get("Gear", 0)
+
+        self.telemetry_history['speed'].append((current_time, speed))
+        self.telemetry_history['throttle'].append((current_time, throttle))
+        self.telemetry_history['brake'].append((current_time, brake))
+        self.telemetry_history['gear'].append((current_time, gear))
+
+        # Remove old data outside time window
+        cutoff_time = current_time - TELEMETRY_HISTORY_SECONDS
+        
+        for key in self.telemetry_history:
+            while self.telemetry_history[key] and self.telemetry_history[key][0][0] < cutoff_time:
+                self.telemetry_history[key].popleft()
 
     def on_update(self, delta_time):
         if self.paused:
             return
 
-        # ===== TIMER =====
         self.elapsed_time += delta_time * self.speed_multiplier
 
         for driver, df in self.drivers_data.items():
-            idx = self.driver_indices[driver]
-            idx += self.speed_multiplier
+            self.driver_indices[driver] += self.speed_multiplier
+            self.driver_times[driver] += delta_time * self.speed_multiplier
 
-            if idx >= len(df):
-                idx = 0
-                self.elapsed_time = 0.0
+            if self.driver_indices[driver] >= len(df):
+                self.driver_indices[driver] = 0.0
+                self.driver_times[driver] = 0.0
+                self.driver_laps[driver] += 1
 
-            self.driver_indices[driver] = int(idx)
+        self._update_camera(delta_time)
+        self._update_telemetry_history()
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.SPACE:
             self.paused = not self.paused
-
         elif key == arcade.key.UP:
             self.speed_multiplier = min(self.speed_multiplier + 0.25, 10)
-
         elif key == arcade.key.DOWN:
             self.speed_multiplier = max(self.speed_multiplier - 0.25, 0.25)
+        elif key == arcade.key.ESCAPE:
+            if self.focus_mode:
+                self.focus_mode = False
+                self.focused_driver = None
+                for key in self.telemetry_history:
+                    self.telemetry_history[key].clear()
+            else:
+                self.focused_driver = None
+
+    def on_mouse_press(self, x, y, button, modifiers):
+        """
+        Detect clicks on leaderboard rows to enter/exit focus mode.
+        """
+        if button != arcade.MOUSE_BUTTON_LEFT:
+            return
+
+        clicked_driver = None
+        for driver, (x1, y1, x2, y2) in self.leaderboard_rows.items():
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                clicked_driver = driver
+                break
+
+        if clicked_driver:
+            if self.focused_driver == clicked_driver and self.focus_mode:
+                # Exit focus mode
+                self.focus_mode = False
+                self.focused_driver = None
+                for key in self.telemetry_history:
+                    self.telemetry_history[key].clear()
+            else:
+                # Enter or switch focus mode
+                self.focused_driver = clicked_driver
+                self.focus_mode = True
+                for key in self.telemetry_history:
+                    self.telemetry_history[key].clear()
+        else:
+            # Clicked outside leaderboard
+            if self.focus_mode:
+                self.focus_mode = False
+                self.focused_driver = None
+                for key in self.telemetry_history:
+                    self.telemetry_history[key].clear()
+            else:
+                self.focused_driver = None
