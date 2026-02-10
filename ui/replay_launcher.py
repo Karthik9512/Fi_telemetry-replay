@@ -6,12 +6,37 @@ from ui.arcade_view import TrackView
 
 # ================= CIRCUIT → FASTF1 MAP =================
 CIRCUIT_MAP = {
-    "Monza": "Italian Grand Prix",
+    # Europe
+    "Bahrain": "Bahrain Grand Prix",
+    "Jeddah": "Saudi Arabian Grand Prix",
+    "Melbourne": "Australian Grand Prix",
+    "Baku": "Azerbaijan Grand Prix",
+    "Miami": "Miami Grand Prix",
+    "Monaco": "Monaco Grand Prix",
+    "Barcelona": "Spanish Grand Prix",
+    "Montreal": "Canadian Grand Prix",
+    "Spielberg": "Austrian Grand Prix",
     "Silverstone": "British Grand Prix",
+    "Budapest": "Hungarian Grand Prix",
     "Spa": "Belgian Grand Prix",
-    "Suzuka": "Japanese Grand Prix",
-}
+    "Zandvoort": "Dutch Grand Prix",
+    "Monza": "Italian Grand Prix",
 
+    # Asia
+    "Singapore": "Singapore Grand Prix",
+    "Suzuka": "Japanese Grand Prix",
+    "Lusail": "Qatar Grand Prix",
+    "Shanghai": "Chinese Grand Prix",
+
+    # Americas
+    "Austin": "United States Grand Prix",
+    "Mexico City": "Mexican Grand Prix",
+    "Sao Paulo": "São Paulo Grand Prix",
+    "Las Vegas": "Las Vegas Grand Prix",
+
+    # Middle East
+    "Yas Marina": "Abu Dhabi Grand Prix",
+}
 
 # ================= TEAM NORMALIZATION MAP =================
 TEAM_NAME_MAP = {
