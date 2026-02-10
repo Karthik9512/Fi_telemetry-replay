@@ -662,94 +662,84 @@ class TrackView(arcade.Window):
             arcade.draw_circle_filled(car_x, car_y, 2, arcade.color.WHITE)
 
     def _draw_leaderboard(self):
-        """Draw the leaderboard HUD."""
+        """Draw a professional F1-style leaderboard HUD with abbreviations and team colors."""
         leaderboard = self.get_leaderboard()
         gaps = self.get_time_gaps(leaderboard)
 
-        rows = len(leaderboard) + 3
-        hud_height = rows * HUD_ROW_HEIGHT + LEADERBOARD_PADDING * 2
-
+        # 1. Calculation of Layout
+        row_count = len(leaderboard)
+        header_height = 45
+        footer_height = 45 # Space for button
+        hud_height = header_height + (row_count * HUD_ROW_HEIGHT) + footer_height
+        
         left = TRACK_VIEWPORT_WIDTH + LEADERBOARD_PADDING
         right = WINDOW_WIDTH - LEADERBOARD_PADDING
         top = WINDOW_HEIGHT - LEADERBOARD_PADDING
         bottom = top - hud_height
-
-        button_height = 28
-        button_x1 = left + 10
-        button_x2 = right - 10
-        button_y1 = bottom + 10
-        button_y2 = button_y1 + button_height
-
-        arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, HUD_BG_COLOR)
-
-        y = top - 28
-
+        
+        # 2. Main Background
+        arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, (15, 15, 15, 230))
+        
+        # 3. Header (F1 RACE / LAP)
+        header_bottom = top - header_height
+        arcade.draw_lrbt_rectangle_filled(left, right, header_bottom, top, (10, 10, 10, 255))
+        
+        # Logo placeholder
+        arcade.draw_text("F1", left + 15, top - 25, arcade.color.WHITE, 16, bold=True, italic=True)
+        arcade.draw_text("RACE", left + 40, top - 25, arcade.color.GRAY, 12, bold=True)
+        
+        # Lap text
+        leader_driver = leaderboard[0][0] if leaderboard else None
+        lap_total = self.total_laps
+        curr_lap = self.driver_laps[leader_driver] if leader_driver else 0
         arcade.draw_text(
-            f"Time: {self.format_time(self.elapsed_time)}",
-            left + LEADERBOARD_PADDING, y,
-            arcade.color.WHITE, 14
-        )
-
-        leader = leaderboard[0][0]
-        arcade.draw_text(
-            f"Lap: {self.driver_laps[leader]}/{TOTAL_LAPS}",
-            left + LEADERBOARD_PADDING, y - 20,
-            arcade.color.WHITE, 13
-        )
-
-        arcade.draw_text(
-            "Leaderboard",
-            left + LEADERBOARD_PADDING, y - 42,
-            arcade.color.WHITE, 14, bold=True
+            f"LAP {curr_lap}/{lap_total}", (left + right) // 2, header_bottom + 10,
+            arcade.color.WHITE, 10, bold=True, anchor_x="center"
         )
 
         self.leaderboard_rows.clear()
-
+        
+        # 4. Driver Rows
+        current_y = header_bottom - HUD_ROW_HEIGHT
         for pos, (driver, _) in enumerate(leaderboard, start=1):
             team = self.driver_team_map.get(driver, "")
             color = TEAM_COLORS.get(team, arcade.color.WHITE)
+            abbr = self.driver_abbr_map.get(driver, driver)
 
-            row_y = y - 42 - pos * HUD_ROW_HEIGHT
-            row_x = left + LEADERBOARD_PADDING
-
+            row_top = current_y + HUD_ROW_HEIGHT
+            row_bottom = current_y
+            
+            # Row Background (for focus)
             if driver == self.focused_driver:
-                arcade.draw_lrbt_rectangle_filled(
-                    left, right, row_y - 2, row_y + 14, HUD_SELECTED_BG
-                )
-                color = tuple(min(int(c * 1.3), 255) for c in color[:3])
+                arcade.draw_lrbt_rectangle_filled(left, right, row_bottom, row_top, (45, 45, 45, 255))
+            
+            # Team Color Stripe
+            arcade.draw_lrbt_rectangle_filled(left, left + 4, row_bottom + 2, row_top - 2, color)
 
-            arcade.draw_text(
-                f"{pos}. {driver}  {gaps[driver]}",
-                row_x, row_y,
-                color,
-                12
-            )
+            # Position
+            arcade.draw_text(str(pos), left + 12, current_y + 5, arcade.color.WHITE, 10, bold=True)
 
-            self.leaderboard_rows[driver] = (
-                left, row_y - 2, right, row_y + 14
-            )
+            # Abbreviation
+            arcade.draw_text(abbr, left + 35, current_y + 5, arcade.color.WHITE, 10, bold=True)
 
-        # ================= POSITION CHART BUTTON =================
-        button_height = 28
-        button_x1 = left + 10
-        button_x2 = right - 10
+            # Gap
+            gap_text = gaps.get(driver, "")
+            arcade.draw_text(gap_text, right - 12, current_y + 5, arcade.color.WHITE, 9, anchor_x="right")
+
+            # Interaction tracking
+            self.leaderboard_rows[driver] = (left, row_bottom, right, row_top)
+            current_y -= HUD_ROW_HEIGHT
+
+        # 5. Position Chart Button (Fixed at bottom)
         button_y1 = bottom + 10
-        button_y2 = button_y1 + button_height
-
-        arcade.draw_lrbt_rectangle_filled(
-            button_x1, button_x2, button_y1, button_y2,
-            (60, 60, 60, 220)
-        )
-
+        button_y2 = button_y1 + 28
+        button_x1, button_x2 = left + 10, right - 10
+        
+        arcade.draw_lrbt_rectangle_filled(button_x1, button_x2, button_y1, button_y2, (40, 40, 40, 255))
         arcade.draw_text(
-            "View Position Chart",
-            button_x1 + 20,
-            button_y1 + 6,
-            arcade.color.WHITE,
-            12,
-            bold=True
+            "VIEW POSITION CHART", (button_x1 + button_x2) // 2, button_y1 + 8,
+            arcade.color.WHITE, 9, bold=True, anchor_x="center"
         )
-
         self.position_chart_button = (button_x1, button_y1, button_x2, button_y2)
 
     def _draw_position_chart(self):
