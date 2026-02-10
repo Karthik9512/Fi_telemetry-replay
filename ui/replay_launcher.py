@@ -1,6 +1,6 @@
 import arcade
 
-from data.fetch_data import load_race, get_multiple_drivers_telemetry
+from data.fetch_data import load_race, get_multiple_drivers_telemetry, get_race_positions
 from ui.arcade_view import TrackView
 
 
@@ -108,6 +108,22 @@ def start_replay(circuit: str, team: str):
     # Load telemetry
     drivers_data = get_multiple_drivers_telemetry(session, drivers)
 
-    # ✅ PASS BOTH ARGUMENTS
-    TrackView(drivers_data, driver_team_map)
+    # Load historical positions for chart
+    print("Loading race position history...")
+    position_history, max_laps = get_race_positions(session)
+
+    # ✅ DRIVER → ABBREVIATION MAP
+    driver_abbr_map = {
+        str(row.DriverNumber): row.Abbreviation
+        for _, row in session.results.iterrows()
+    }
+
+    # ✅ PASS ALL ARGUMENTS
+    TrackView(
+        drivers_data, 
+        driver_team_map, 
+        position_history=position_history, 
+        total_laps=max_laps,
+        driver_abbr_map=driver_abbr_map
+    )
     arcade.run()

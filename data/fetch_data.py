@@ -67,3 +67,39 @@ def get_multiple_drivers_telemetry(session, driver_numbers):
         raise RuntimeError("No valid telemetry for any driver")
 
     return drivers_data
+
+
+def get_race_positions(session):
+    """
+    Extract lap-by-lap position history for all drivers.
+    
+    Returns:
+        positions (dict): {driver: [p1, p2, ...]}
+        max_laps (int): Total laps in session
+    """
+    positions = {}
+    max_laps = 0
+    
+    # Get all drivers
+    drivers = session.drivers
+    
+    for driver in drivers:
+        laps = session.laps.pick_drivers([driver])
+        
+        if laps.empty:
+            continue
+            
+        # Get positions per lap, sorted by lap number
+        # FastF1 returns Position as float sometimes, convert to int
+        driver_df = laps[['LapNumber', 'Position']].dropna().sort_values('LapNumber')
+        
+        if driver_df.empty:
+            continue
+            
+        pos_list = [int(p) for p in driver_df['Position'].tolist()]
+        
+        # Store as string for consistency across UI
+        positions[str(driver)] = pos_list
+        max_laps = max(max_laps, len(pos_list))
+        
+    return positions, max_laps

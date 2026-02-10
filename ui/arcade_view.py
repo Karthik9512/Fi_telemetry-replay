@@ -58,17 +58,31 @@ TEAM_COLORS = {
 
 
 class TrackView(arcade.Window):
-    def __init__(self, drivers_data, driver_team_map):
+    def __init__(self, drivers_data, driver_team_map, position_history=None, total_laps=None, driver_abbr_map=None):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE)
 
         # Original data
         self.drivers_data = drivers_data
         self.driver_team_map = driver_team_map
+        self.driver_abbr_map = driver_abbr_map if driver_abbr_map else {}
+        
+        # Race Config
+        self.total_laps = total_laps if total_laps else TOTAL_LAPS
+        
+        # Position History (Full Race or Incremental)
+        if position_history:
+            self.position_history = position_history
+            self.has_full_history = True
+        else:
+            # Fallback to empty history that builds over time
+            self.position_history = {str(driver): [i+1] for i, driver in enumerate(drivers_data.keys())}
+            self.has_full_history = False
 
         # Simulation state
         self.driver_indices = {d: 0.0 for d in drivers_data}
         self.driver_times = {d: 0.0 for d in drivers_data}
         self.driver_laps = {d: 1 for d in drivers_data}
+        self.current_race_lap = 1.0  # Track overall race progress
 
         self.speed_multiplier = 1.0
         self.paused = False
@@ -92,7 +106,13 @@ class TrackView(arcade.Window):
             'throttle': deque(maxlen=500),
             'brake': deque(maxlen=500),
             'gear': deque(maxlen=500),
+
+            
         }
+        # Position chart state
+        self.show_position_chart = False
+        self.position_chart_button = None
+        # self.position_history initialization moved up
 
         # Rescale track coordinates to fit within viewport
         self._rescale_track_to_viewport()
@@ -190,7 +210,10 @@ class TrackView(arcade.Window):
     def on_draw(self):
         self.clear()
 
-        if self.focus_mode and self.focused_driver:
+        if self.show_position_chart:
+            self._draw_position_chart()
+            self._draw_mini_track()
+        elif self.focus_mode and self.focused_driver:
             self._draw_focus_mode()
         else:
             self._draw_normal_mode()
@@ -651,6 +674,12 @@ class TrackView(arcade.Window):
         top = WINDOW_HEIGHT - LEADERBOARD_PADDING
         bottom = top - hud_height
 
+        button_height = 28
+        button_x1 = left + 10
+        button_x2 = right - 10
+        button_y1 = bottom + 10
+        button_y2 = button_y1 + button_height
+
         arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, HUD_BG_COLOR)
 
         y = top - 28
@@ -700,6 +729,191 @@ class TrackView(arcade.Window):
                 left, row_y - 2, right, row_y + 14
             )
 
+        # ================= POSITION CHART BUTTON =================
+        button_height = 28
+        button_x1 = left + 10
+        button_x2 = right - 10
+        button_y1 = bottom + 10
+        button_y2 = button_y1 + button_height
+
+        arcade.draw_lrbt_rectangle_filled(
+            button_x1, button_x2, button_y1, button_y2,
+            (60, 60, 60, 220)
+        )
+
+        arcade.draw_text(
+            "View Position Chart",
+            button_x1 + 20,
+            button_y1 + 6,
+            arcade.color.WHITE,
+            12,
+            bold=True
+        )
+
+        self.position_chart_button = (button_x1, button_y1, button_x2, button_y2)
+
+    def _draw_position_chart(self):
+        """
+        Draw a premium, professional F1-style position chart with:
+        - Live progress tracking (vertical line)
+        - Driver legend with team colors
+        - Highlighted current focused driver
+        - Dark grid aesthetics
+        """
+        # Layout variables
+        LEGEND_WIDTH = 100
+        MARGIN = 60
+        CHART_PADDING = 20
+        
+        chart_left = MARGIN
+        chart_right = WINDOW_WIDTH - LEADERBOARD_WIDTH - LEADERBOARD_PADDING - LEGEND_WIDTH - MARGIN
+        chart_bottom = 120
+        chart_top = WINDOW_HEIGHT - 100
+        
+        chart_width = chart_right - chart_left
+        chart_height = chart_top - chart_bottom
+
+        # Background - Very dark, almost black
+        arcade.draw_lrbt_rectangle_filled(
+            0, WINDOW_WIDTH - LEADERBOARD_WIDTH-LEADERBOARD_PADDING,
+            0, WINDOW_HEIGHT,
+            (10, 10, 10, 255)
+        )
+        
+        # Grid lines (X-axis: Laps)
+        max_laps = self.total_laps
+        for lap in range(1, max_laps + 1):
+            x = chart_left + ((lap - 1) / max(1, max_laps - 1)) * chart_width
+            # Vertical line
+            arcade.draw_line(
+                x, chart_bottom, x, chart_top, 
+                (40, 40, 40, 150), 1
+            )
+            # Lap label
+            arcade.draw_text(
+                str(lap), x, chart_bottom - 30,
+                arcade.color.GRAY, 10, anchor_x="center"
+            )
+
+        # Grid lines (Y-axis: Positions)
+        drivers = list(self.position_history.keys())
+        num_drivers = len(drivers) if drivers else 20
+        positions_to_show = [1, 5, 10, 15, num_drivers]
+        
+        for pos in positions_to_show:
+            y = chart_top - ((pos - 1) / max(1, num_drivers - 1)) * chart_height
+            # Horizontal line
+            arcade.draw_line(
+                chart_left, y, chart_right, y, 
+                (40, 40, 40, 150), 1
+            )
+            # Position label
+            arcade.draw_text(
+                str(pos), chart_left - 25, y - 5,
+                arcade.color.GRAY, 10, anchor_x="right"
+            )
+
+        # Title
+        arcade.draw_text(
+            "POSITION CHANGES",
+            chart_left, chart_top + 40,
+            arcade.color.WHITE, 22, bold=True
+        )
+        
+        # Labels
+        arcade.draw_text("LAP", (chart_left + chart_right) // 2, chart_bottom - 60, arcade.color.GRAY, 12, anchor_x="center")
+        arcade.draw_text("POS", chart_left - 60, (chart_top + chart_bottom) // 2, arcade.color.GRAY, 12, rotation=90, anchor_x="center")
+
+        # Position History Lines
+        for driver in drivers:
+            history = self.position_history.get(driver, [])
+            if len(history) < 1:
+                continue
+
+            team = self.driver_team_map.get(driver, "")
+            color = TEAM_COLORS.get(team, arcade.color.WHITE)
+            
+            # Focused driver line is bright and thick, others are slightly dimmed
+            if self.focused_driver and driver == self.focused_driver:
+                line_color = color
+                line_width = 4
+                z_order = 10
+            else:
+                line_color = (*color[:3], 150) # Dimmed
+                line_width = 2
+                z_order = 1
+            
+            points = []
+            for lap_idx, pos in enumerate(history):
+                # Map lap_idx (0-based) to chart X
+                x = chart_left + (lap_idx / (max_laps - 1)) * chart_width
+                y = chart_top - ((pos - 1) / (num_drivers - 1)) * chart_height
+                points.append((x, y))
+            
+            if len(points) >= 2:
+                arcade.draw_line_strip(points, line_color, line_width)
+            elif len(points) == 1:
+                 arcade.draw_circle_filled(points[0][0], points[0][1], line_width, line_color)
+
+        # LIVE PROGRESS MARKER (Vertical red line)
+        progress_x = chart_left + ((self.current_race_lap - 1) / (max_laps - 1)) * chart_width
+        arcade.draw_line(
+            progress_x, chart_bottom, progress_x, chart_top,
+            (255, 0, 0, 200), 2
+        )
+        # Progress label
+        arcade.draw_text(
+            f"LAP {self.current_race_lap:.1f}",
+            progress_x, chart_top + 10,
+            (255, 50, 50), 10, bold=True, anchor_x="center"
+        )
+
+        # LEGEND (Right side)
+        legend_x = chart_right + 30
+        legend_y_start = chart_top
+        
+        # Sort drivers by their current position for the legend
+        sorted_drivers = sorted(
+            drivers,
+            key=lambda d: self.position_history[d][-1] if self.position_history.get(d) else 99
+        )
+        
+        for i, driver in enumerate(sorted_drivers):
+            abbr = self.driver_abbr_map.get(driver, driver)
+            team = self.driver_team_map.get(driver, "")
+            color = TEAM_COLORS.get(team, arcade.color.WHITE)
+            
+            row_y = legend_y_start - i * 22
+            
+            # Active/Focused driver highlight in legend
+            if driver == self.focused_driver:
+                arcade.draw_lrbt_rectangle_filled(
+                    legend_x - 5, legend_x + 80,
+                    row_y - 2, row_y + 16,
+                    (60, 60, 60, 200)
+                )
+            
+            # Color indicator
+            arcade.draw_lrbt_rectangle_filled(legend_x, legend_x + 10, row_y + 2, row_y + 12, color)
+            
+            # Abbreviation text
+            arcade.draw_text(
+                abbr, legend_x + 20, row_y,
+                arcade.color.WHITE if driver != self.focused_driver else arcade.color.YELLOW, 
+                10, bold=(driver == self.focused_driver)
+            )
+
+        # Return instruction
+        arcade.draw_text(
+            "PRESS ESC TO RETURN TO TRACK",
+            chart_left, 40,
+            arcade.color.DARK_GRAY, 10, italic=True
+        )
+
+        # Sub-views
+        self._draw_leaderboard()
+        self._draw_mini_track()
+
     def _update_telemetry_history(self):
         """Update telemetry history buffers for scrolling graphs."""
         if not self.focus_mode or not self.focused_driver:
@@ -735,6 +949,17 @@ class TrackView(arcade.Window):
             return
 
         self.elapsed_time += delta_time * self.speed_multiplier
+        
+        leaderboard = self.get_leaderboard()
+        current_standings = {d: i + 1 for i, (d, _) in enumerate(leaderboard)}
+
+        # Track overall race progress based on leader
+        if leaderboard:
+            leader_driver = leaderboard[0][0]
+            leader_df = self.drivers_data[leader_driver]
+            leader_idx = self.driver_indices[leader_driver]
+            lap_progress = leader_idx / len(leader_df)
+            self.current_race_lap = self.driver_laps[leader_driver] + lap_progress
 
         for driver, df in self.drivers_data.items():
             self.driver_indices[driver] += self.speed_multiplier
@@ -744,6 +969,11 @@ class TrackView(arcade.Window):
                 self.driver_indices[driver] = 0.0
                 self.driver_times[driver] = 0.0
                 self.driver_laps[driver] += 1
+                
+                # Record position history at end of lap ONLY if we don't have full history
+                if not self.has_full_history and self.driver_laps[driver] <= self.total_laps:
+                    if driver in current_standings:
+                        self.position_history[driver].append(current_standings[driver])
 
         self._update_camera(delta_time)
         self._update_telemetry_history()
@@ -755,8 +985,10 @@ class TrackView(arcade.Window):
             self.speed_multiplier = min(self.speed_multiplier + 0.25, 10)
         elif key == arcade.key.DOWN:
             self.speed_multiplier = max(self.speed_multiplier - 0.25, 0.25)
-        elif key == arcade.key.ESCAPE:
-            if self.focus_mode:
+        elif key == arcade.key.ESCAPE or key == arcade.key.BACKSPACE:
+            if self.show_position_chart:
+                self.show_position_chart = False
+            elif self.focus_mode:
                 self.focus_mode = False
                 self.focused_driver = None
                 for key in self.telemetry_history:
@@ -770,6 +1002,13 @@ class TrackView(arcade.Window):
         """
         if button != arcade.MOUSE_BUTTON_LEFT:
             return
+
+        # --- Position chart button click ---
+        if self.position_chart_button:
+            x1, y1, x2, y2 = self.position_chart_button
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                self.show_position_chart = not self.show_position_chart
+                return
 
         clicked_driver = None
         for driver, (x1, y1, x2, y2) in self.leaderboard_rows.items():
