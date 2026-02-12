@@ -134,6 +134,10 @@ class TrackView(arcade.Window):
     
         self.show_lap_analysis = False
         self.lap_analysis_button = None
+        # ================= GEAR ANALYSIS STATE =================
+        self.show_gear_analysis = False
+        self.gear_analysis_button = None
+
     # ================= TRACK SCALING =================
         self._rescale_track_to_viewport()
 
@@ -278,7 +282,9 @@ class TrackView(arcade.Window):
     def on_draw(self):
         self.clear()
 
-        if self.show_lap_analysis:
+        if self.show_gear_analysis:
+            self._draw_gear_analysis()
+        elif self.show_lap_analysis:
             self._draw_lap_analysis()
         elif self.show_position_chart:
             self._draw_position_chart()
@@ -289,6 +295,7 @@ class TrackView(arcade.Window):
             self._draw_normal_mode()
 
             self._draw_weather_panel()
+
 
 
     def _draw_normal_mode(self):
@@ -835,6 +842,27 @@ class TrackView(arcade.Window):
         )
 
         self.lap_analysis_button = (button_x1, analysis_y1, button_x2, analysis_y2)
+        # ================= GEAR ANALYSIS BUTTON =================
+        gear_y1 = analysis_y1 - 40
+        gear_y2 = gear_y1 + 28
+
+        arcade.draw_lrbt_rectangle_filled(
+    button_x1, button_x2,
+    gear_y1, gear_y2,
+    (80, 80, 80, 255)
+)
+
+        arcade.draw_text(
+    "GEAR ANALYSIS",
+    (button_x1 + button_x2) // 2,
+    gear_y1 + 8,
+    arcade.color.WHITE,
+    9,
+    bold=True,
+    anchor_x="center"
+)
+
+        self.gear_analysis_button = (button_x1, gear_y1, button_x2, gear_y2)
 
 
     def _draw_position_chart(self):
@@ -1171,6 +1199,13 @@ class TrackView(arcade.Window):
             if x1 <= x <= x2 and y1 <= y <= y2:
                 self.show_lap_analysis = not self.show_lap_analysis
                 return
+        # --- Gear analysis button ---
+        if self.gear_analysis_button:
+            x1, y1, x2, y2 = self.gear_analysis_button
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                self.show_gear_analysis = True
+                return
+
 
 
         clicked_driver = None
@@ -1221,6 +1256,65 @@ class TrackView(arcade.Window):
         "wind": round(row.get("WindSpeed", 0), 1),
         "condition": condition
     }
+    
+
+    def _draw_gear_analysis(self):
+
+        if not self.session:
+            return
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib import colormaps
+        from matplotlib.collections import LineCollection
+
+        session = self.session
+
+        lap = session.laps.pick_fastest()
+        tel = lap.get_telemetry()
+
+        x = np.array(tel['X'].values)
+        y = np.array(tel['Y'].values)
+
+        points = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        gear = tel['nGear'].to_numpy().astype(float)
+
+        cmap = colormaps['Paired']
+        lc_comp = LineCollection(
+        segments,
+        norm=plt.Normalize(1, cmap.N + 1),
+        cmap=cmap
+    )
+        lc_comp.set_array(gear)
+        lc_comp.set_linewidth(4)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.add_collection(lc_comp)
+        ax.axis('equal')
+
+        ax.tick_params(labelleft=False, left=False,
+                   labelbottom=False, bottom=False)
+
+        plt.suptitle(
+        f"Fastest Lap Gear Visualization\n"
+        f"{lap['Driver']} - {session.event['EventName']} {session.event.year}"
+    )
+
+        cbar = plt.colorbar(
+        mappable=lc_comp,
+        label="Gear",
+        boundaries=np.arange(1, 10)
+    )
+
+        cbar.set_ticks(np.arange(1.5, 9.5))
+        cbar.set_ticklabels(np.arange(1, 9))
+
+        plt.show()
+
+    # Reset state after showing
+        self.show_gear_analysis = False
+
 
 
     
