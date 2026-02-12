@@ -68,7 +68,8 @@ class TrackView(arcade.Window):
              total_laps=None,
              driver_abbr_map=None,
              weather_data=None,          # ✅ NEW
-             circuit_name=None):         # ✅ NEW
+             circuit_name=None,
+             session=None):      # ✅ NEW
 
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE)
 
@@ -80,7 +81,8 @@ class TrackView(arcade.Window):
     # ================= WEATHER DATA =================
         self.weather_data = weather_data     # FastF1 weather dataframe
         self.circuit_name = circuit_name
-        self.current_weather = None          # Will update dynamically
+        self.current_weather = None  
+        self.session = session        # Will update dynamically
 
     # ================= RACE CONFIG =================
         self.total_laps = total_laps if total_laps else TOTAL_LAPS
@@ -129,9 +131,13 @@ class TrackView(arcade.Window):
     # ================= POSITION CHART =================
         self.show_position_chart = False
         self.position_chart_button = None
-
+    
+        self.show_lap_analysis = False
+        self.lap_analysis_button = None
     # ================= TRACK SCALING =================
         self._rescale_track_to_viewport()
+
+
 
         arcade.set_background_color(arcade.color.BLACK)
 
@@ -272,14 +278,18 @@ class TrackView(arcade.Window):
     def on_draw(self):
         self.clear()
 
-        if self.show_position_chart:
+        if self.show_lap_analysis:
+            self._draw_lap_analysis()
+        elif self.show_position_chart:
             self._draw_position_chart()
             self._draw_mini_track()
         elif self.focus_mode and self.focused_driver:
             self._draw_focus_mode()
         else:
             self._draw_normal_mode()
-        self._draw_weather_panel()
+
+            self._draw_weather_panel()
+
 
     def _draw_normal_mode(self):
         """Normal track view with camera controls."""
@@ -804,6 +814,28 @@ class TrackView(arcade.Window):
             arcade.color.WHITE, 9, bold=True, anchor_x="center"
         )
         self.position_chart_button = (button_x1, button_y1, button_x2, button_y2)
+        # ================= ANALYZE LAPS BUTTON =================
+        analysis_y1 = button_y1 - 40
+        analysis_y2 = analysis_y1 + 28
+
+        arcade.draw_lrbt_rectangle_filled(
+        button_x1, button_x2,
+        analysis_y1, analysis_y2,
+        (60, 60, 60, 255)
+        )
+
+        arcade.draw_text(
+        "ANALYZE LAPS",
+        (button_x1 + button_x2) // 2,
+        analysis_y1 + 8,
+        arcade.color.WHITE,
+        9,
+        bold=True,
+        anchor_x="center"
+        )
+
+        self.lap_analysis_button = (button_x1, analysis_y1, button_x2, analysis_y2)
+
 
     def _draw_position_chart(self):
         """
@@ -967,6 +999,76 @@ class TrackView(arcade.Window):
         self._draw_leaderboard()
         self._draw_mini_track()
 
+    def _draw_lap_analysis(self):
+
+        if not self.session:
+            return
+
+        import seaborn as sns
+        from matplotlib import pyplot as plt
+        import fastf1.plotting
+
+        race = self.session
+
+        fastf1.plotting.setup_mpl(
+            mpl_timedelta_support=True,
+            color_scheme='fastf1'
+        )
+
+        point_finishers = race.drivers[:10]
+
+        driver_laps = race.laps.pick_drivers(point_finishers).pick_quicklaps()
+        driver_laps = driver_laps.reset_index()
+
+        finishing_order = [
+            race.get_driver(i)["Abbreviation"]
+            for i in point_finishers
+        ]
+
+        driver_laps["LapTime(s)"] = driver_laps["LapTime"].dt.total_seconds()
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+        sns.violinplot(
+            data=driver_laps,
+            x="Driver",
+            y="LapTime(s)",
+            hue="Driver",
+            inner=None,
+            density_norm="area",
+            order=finishing_order,
+            palette=fastf1.plotting.get_driver_color_mapping(session=race)
+        )
+
+        sns.swarmplot(
+        data=driver_laps,
+        x="Driver",
+        y="LapTime(s)",
+        order=finishing_order,
+        hue="Compound",
+        palette=fastf1.plotting.get_compound_mapping(session=race),
+        hue_order=["SOFT", "MEDIUM", "HARD"],
+        linewidth=0,
+        size=4,
+    )
+
+        ax.set_xlabel("Driver")
+        ax.set_ylabel("Lap Time (s)")
+        plt.suptitle(
+        f"{race.event.year} {race.event.EventName} Lap Time Distributions"
+        )
+
+        sns.despine(left=True, bottom=True)
+        plt.tight_layout()
+        plt.show()
+
+    # Close analysis mode after showing
+        self.show_lap_analysis = False
+
+
+
+
+
     def _update_telemetry_history(self):
         """Update telemetry history buffers for scrolling graphs."""
         if not self.focus_mode or not self.focused_driver:
@@ -1063,6 +1165,13 @@ class TrackView(arcade.Window):
             if x1 <= x <= x2 and y1 <= y <= y2:
                 self.show_position_chart = not self.show_position_chart
                 return
+        # --- Lap analysis button ---
+        if self.lap_analysis_button:
+            x1, y1, x2, y2 = self.lap_analysis_button
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                self.show_lap_analysis = not self.show_lap_analysis
+                return
+
 
         clicked_driver = None
         for driver, (x1, y1, x2, y2) in self.leaderboard_rows.items():

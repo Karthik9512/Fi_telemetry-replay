@@ -160,7 +160,8 @@ def start_replay(circuit: str, team: str):
         total_laps=max_laps,
         driver_abbr_map=driver_abbr_map,
         weather_data=weather_df,          # ✅ NEW
-        circuit_name=circuit              # ✅ NEW
+        circuit_name=circuit,
+        session=session               # ✅ NEW
     )
 
     arcade.run()
