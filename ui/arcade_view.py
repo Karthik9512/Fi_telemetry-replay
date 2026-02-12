@@ -1,6 +1,8 @@
 import arcade
 import math
 from collections import deque
+from ui.circuits import CIRCUIT_MAP
+
 
 # ================= WINDOW =================
 WINDOW_WIDTH = 1600

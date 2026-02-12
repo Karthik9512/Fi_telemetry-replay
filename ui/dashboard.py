@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 import sys
 
 from ui.replay_launcher import start_replay
+from ui.circuits import CIRCUIT_MAP
 
 
 class Dashboard(QWidget):
@@ -34,12 +35,11 @@ class Dashboard(QWidget):
         layout.addWidget(circuit_label)
 
         self.circuit_dropdown = QComboBox()
-        self.circuit_dropdown.addItems([
-            "Monza",
-            "Silverstone",
-            "Spa",
-            "Suzuka",
-        ])
+
+        # Load circuits dynamically from CIRCUIT_MAP
+        self.circuit_options = list(CIRCUIT_MAP.keys())
+        self.circuit_dropdown.addItems(self.circuit_options)
+
         layout.addWidget(self.circuit_dropdown)
 
         # ================= TEAM =================
@@ -52,13 +52,22 @@ class Dashboard(QWidget):
             "Ferrari",
             "Red Bull",
             "Mercedes",
+            "McLaren",
+            "Aston Martin",
+            "Alpine",
+            "Williams",
+            "RB",
+            "Haas",
+            "Sauber",
         ])
+
         layout.addWidget(self.team_dropdown)
 
         # ================= START BUTTON =================
         self.start_button = QPushButton("Start Replay")
         self.start_button.setFixedHeight(36)
         self.start_button.clicked.connect(self.on_start_clicked)
+
         layout.addWidget(self.start_button)
 
         self.setLayout(layout)
@@ -68,7 +77,7 @@ class Dashboard(QWidget):
         circuit = self.circuit_dropdown.currentText()
         team = self.team_dropdown.currentText()
 
-        self.close()  # VERY IMPORTANT
+        self.close()  # Close dashboard before launching replay
 
         start_replay(circuit=circuit, team=team)
 
