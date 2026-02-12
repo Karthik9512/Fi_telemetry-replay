@@ -2,6 +2,7 @@ import arcade
 import math
 from collections import deque
 from ui.circuits import CIRCUIT_MAP
+import pandas as pd
 
 
 # ================= WINDOW =================
@@ -60,66 +61,125 @@ TEAM_COLORS = {
 
 
 class TrackView(arcade.Window):
-    def __init__(self, drivers_data, driver_team_map, position_history=None, total_laps=None, driver_abbr_map=None):
+    def __init__(self,
+             drivers_data,
+             driver_team_map,
+             position_history=None,
+             total_laps=None,
+             driver_abbr_map=None,
+             weather_data=None,          # ✅ NEW
+             circuit_name=None):         # ✅ NEW
+
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE)
 
-        # Original data
+    # ================= ORIGINAL DATA =================
         self.drivers_data = drivers_data
         self.driver_team_map = driver_team_map
         self.driver_abbr_map = driver_abbr_map if driver_abbr_map else {}
-        
-        # Race Config
+
+    # ================= WEATHER DATA =================
+        self.weather_data = weather_data     # FastF1 weather dataframe
+        self.circuit_name = circuit_name
+        self.current_weather = None          # Will update dynamically
+
+    # ================= RACE CONFIG =================
         self.total_laps = total_laps if total_laps else TOTAL_LAPS
-        
-        # Position History (Full Race or Incremental)
+
+    # ================= POSITION HISTORY =================
         if position_history:
             self.position_history = position_history
             self.has_full_history = True
         else:
-            # Fallback to empty history that builds over time
-            self.position_history = {str(driver): [i+1] for i, driver in enumerate(drivers_data.keys())}
+            self.position_history = {
+            str(driver): [i + 1]
+            for i, driver in enumerate(drivers_data.keys())
+        }
             self.has_full_history = False
 
-        # Simulation state
+    # ================= SIMULATION STATE =================
         self.driver_indices = {d: 0.0 for d in drivers_data}
         self.driver_times = {d: 0.0 for d in drivers_data}
         self.driver_laps = {d: 1 for d in drivers_data}
-        self.current_race_lap = 1.0  # Track overall race progress
+        self.current_race_lap = 1.0
 
         self.speed_multiplier = 1.0
         self.paused = False
         self.elapsed_time = 0.0
 
-        # Camera focus state
-        self.focused_driver = None  # Currently focused driver (None = overview)
-        self.camera_offset_x = 0.0  # Current camera offset X
-        self.camera_offset_y = 0.0  # Current camera offset Y
-        self.camera_zoom = 1.0      # Current zoom level
-        
-        # Leaderboard click detection (store bounding boxes)
-        self.leaderboard_rows = {}  # {driver: (x1, y1, x2, y2)}
+    # ================= CAMERA =================
+        self.focused_driver = None
+        self.camera_offset_x = 0.0
+        self.camera_offset_y = 0.0
+        self.camera_zoom = 1.0
 
-        # DRIVER FOCUS MODE STATE
-        self.focus_mode = False  # True = telemetry view, False = normal view
-        
-        # Telemetry history buffers for scrolling graphs
+    # ================= LEADERBOARD =================
+        self.leaderboard_rows = {}
+
+    # ================= FOCUS MODE =================
+        self.focus_mode = False
+
+    # ================= TELEMETRY HISTORY =================
         self.telemetry_history = {
-            'speed': deque(maxlen=500),
-            'throttle': deque(maxlen=500),
-            'brake': deque(maxlen=500),
-            'gear': deque(maxlen=500),
+        'speed': deque(maxlen=500),
+        'throttle': deque(maxlen=500),
+        'brake': deque(maxlen=500),
+        'gear': deque(maxlen=500),
+    }
 
-            
-        }
-        # Position chart state
+    # ================= POSITION CHART =================
         self.show_position_chart = False
         self.position_chart_button = None
-        # self.position_history initialization moved up
 
-        # Rescale track coordinates to fit within viewport
+    # ================= TRACK SCALING =================
         self._rescale_track_to_viewport()
 
         arcade.set_background_color(arcade.color.BLACK)
+
+
+    def _draw_weather_panel(self):
+        if not self.current_weather:
+            return
+
+        panel_width = 260
+        panel_height = 170
+
+        x1 = WINDOW_WIDTH - panel_width - 20
+        y1 = 20
+        x2 = x1 + panel_width
+        y2 = y1 + panel_height
+
+    # Background
+        arcade.draw_lrbt_rectangle_filled(
+            x1, x2, y1, y2,
+            (20, 20, 20, 230)
+        )
+
+        arcade.draw_lrbt_rectangle_outline(
+            x1, x2, y1, y2,
+            arcade.color.GRAY, 2
+        )
+
+        w = self.current_weather
+
+        arcade.draw_text(
+            "WEATHER",
+            x1 + 15, y2 - 25,
+            arcade.color.WHITE, 14, bold=True
+        )
+
+        arcade.draw_text(f"Track: {w['track_temp']}°C", x1 + 15, y2 - 55, arcade.color.LIGHT_GRAY, 12)
+        arcade.draw_text(f"Air: {w['air_temp']}°C", x1 + 15, y2 - 75, arcade.color.LIGHT_GRAY, 12)
+        arcade.draw_text(f"Humidity: {w['humidity']}%", x1 + 15, y2 - 95, arcade.color.LIGHT_GRAY, 12)
+        arcade.draw_text(f"Wind: {w['wind']} km/h", x1 + 15, y2 - 115, arcade.color.LIGHT_GRAY, 12)
+
+        color = arcade.color.RED if w["condition"] == "WET" else arcade.color.GREEN
+
+        arcade.draw_text(
+            f"Condition: {w['condition']}",
+            x1 + 15, y2 - 140,
+            color, 13, bold=True
+        )
+
 
     def _rescale_track_to_viewport(self):
         """
@@ -219,6 +279,7 @@ class TrackView(arcade.Window):
             self._draw_focus_mode()
         else:
             self._draw_normal_mode()
+        self._draw_weather_panel()
 
     def _draw_normal_mode(self):
         """Normal track view with camera controls."""
@@ -966,6 +1027,7 @@ class TrackView(arcade.Window):
                 if not self.has_full_history and self.driver_laps[driver] <= self.total_laps:
                     if driver in current_standings:
                         self.position_history[driver].append(current_standings[driver])
+        self._update_weather_from_fastf1()
 
         self._update_camera(delta_time)
         self._update_telemetry_history()
@@ -1030,3 +1092,26 @@ class TrackView(arcade.Window):
                     self.telemetry_history[key].clear()
             else:
                 self.focused_driver = None
+    
+    def _update_weather_from_fastf1(self):
+        if self.weather_data is None or len(self.weather_data) == 0:
+            return
+
+        current_time = pd.Timedelta(seconds=self.elapsed_time)
+        df = self.weather_data
+
+        idx = (df["Time"] - current_time).abs().idxmin()
+        row = df.loc[idx]
+
+        condition = "WET" if row.get("Rainfall", 0) > 0 else "DRY"
+
+        self.current_weather = {
+        "track_temp": round(row.get("TrackTemp", 0), 1),
+        "air_temp": round(row.get("AirTemp", 0), 1),
+        "humidity": int(row.get("Humidity", 0)),
+        "wind": round(row.get("WindSpeed", 0), 1),
+        "condition": condition
+    }
+
+
+    

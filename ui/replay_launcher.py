@@ -1,4 +1,6 @@
 import arcade
+import fastf1
+import pandas as pd
 
 from data.fetch_data import load_race, get_multiple_drivers_telemetry, get_race_positions
 from ui.arcade_view import TrackView
@@ -109,46 +111,56 @@ def start_replay(circuit: str, team: str):
     year = 2024
     session_type = "R"
 
-    # ✅ CIRCUIT MAP IS NOW DEFINED
     race_name = CIRCUIT_MAP.get(circuit)
     if not race_name:
         raise ValueError(f"Unsupported circuit: {circuit}")
 
-    # Load FastF1 session
+    # ================= LOAD SESSION =================
     session = load_race(year, race_name, session_type)
 
-    # Filter drivers
+    # IMPORTANT: Ensure weather is available
+    if session.weather_data is None or session.weather_data.empty:
+        print("Reloading session with weather data...")
+        session = fastf1.get_session(year, race_name, session_type)
+        session.load(weather=True, telemetry=True)
+
+    weather_df = session.weather_data
+
+    # ================= DRIVER FILTER =================
     drivers = get_drivers_by_team(session, team)
     if not drivers:
         raise ValueError(f"No drivers found for team: {team}")
 
     print(f"Drivers selected: {drivers}")
 
-    # ✅ DRIVER → TEAM MAP
+    # ================= DRIVER → TEAM MAP =================
     driver_team_map = {
         str(row.DriverNumber): TEAM_NAME_MAP.get(row.TeamName, row.TeamName)
         for _, row in session.results.iterrows()
     }
 
-    # Load telemetry
+    # ================= LOAD TELEMETRY =================
     drivers_data = get_multiple_drivers_telemetry(session, drivers)
 
-    # Load historical positions for chart
+    # ================= LOAD POSITION HISTORY =================
     print("Loading race position history...")
     position_history, max_laps = get_race_positions(session)
 
-    # ✅ DRIVER → ABBREVIATION MAP
+    # ================= DRIVER → ABBREVIATION MAP =================
     driver_abbr_map = {
         str(row.DriverNumber): row.Abbreviation
         for _, row in session.results.iterrows()
     }
 
-    # ✅ PASS ALL ARGUMENTS
+    # ================= START ARCADE VIEW =================
     TrackView(
-        drivers_data, 
-        driver_team_map, 
-        position_history=position_history, 
+        drivers_data,
+        driver_team_map,
+        position_history=position_history,
         total_laps=max_laps,
-        driver_abbr_map=driver_abbr_map
+        driver_abbr_map=driver_abbr_map,
+        weather_data=weather_df,          # ✅ NEW
+        circuit_name=circuit              # ✅ NEW
     )
+
     arcade.run()

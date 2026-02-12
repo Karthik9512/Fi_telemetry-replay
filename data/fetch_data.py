@@ -1,8 +1,13 @@
 import fastf1
 import pandas as pd
+from pathlib import Path
 
 
 def load_race(year: int, race_name: str, session_type: str = "R"):
+    # Create cache directory if it doesn't exist
+    cache_dir = Path("cache")
+    cache_dir.mkdir(exist_ok=True)
+    
     fastf1.Cache.enable_cache("cache")
 
     print(f"Loading {year} {race_name} {session_type} session...")
