@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -7,7 +11,6 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 from PySide6.QtCore import Qt
-import sys
 
 from ui.replay_launcher import start_replay
 from ui.circuits import CIRCUIT_MAP
@@ -88,3 +91,6 @@ def run_dashboard():
     window = Dashboard()
     window.show()
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    run_dashboard()

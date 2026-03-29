@@ -1,9 +1,12 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import arcade
 import math
 from collections import deque
 from ui.circuits import CIRCUIT_MAP
 import pandas as pd
-
 
 # ================= WINDOW =================
 WINDOW_WIDTH = 1600
